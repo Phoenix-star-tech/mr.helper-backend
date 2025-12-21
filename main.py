@@ -88,7 +88,8 @@ def verify_payment():
             
             # 2. Update Supabase via REST API
             update_data = {
-                'is_subscribed': True
+                'is_subscribed': True,
+                'subscription_expiry': expiry_date.isoformat()
             }
             
             # Supabase REST API call
@@ -118,4 +119,3 @@ def verify_payment():
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=3000, debug=True)
-
