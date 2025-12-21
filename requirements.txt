@@ -1,9 +1,7 @@
 Flask==3.0.0
 Flask-CORS==4.0.0
 razorpay==1.4.2
-supabase==2.3.4
 gunicorn==21.2.0
 setuptools==69.0.3
 requests==2.31.0
 certifi==2024.2.2
-httpx==0.24.1

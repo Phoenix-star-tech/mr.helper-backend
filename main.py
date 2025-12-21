@@ -5,7 +5,7 @@ import hmac
 import hashlib
 import os
 from datetime import datetime, timedelta
-from supabase import create_client, Client
+import requests
 
 app = Flask(__name__)
 CORS(app)  # Enable CORS for Flutter app
@@ -19,7 +19,6 @@ client = razorpay.Client(auth=(RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET))
 # Supabase Config
 SUPABASE_URL = 'https://rvrpsqdrbwfvllelyqhf.supabase.co'
 SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJ2cnBzcWRyYndmdmxsZWx5cWhmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjUxNTgxOTksImV4cCI6MjA4MDczNDE5OX0.ON2ioqbNJegKOWeGu_eqsgjNxQ6IdHCDuFRqjUfBYHk'
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 @app.route('/create-subscription', methods=['POST'])
 def create_subscription():
@@ -87,17 +86,30 @@ def verify_payment():
             now = datetime.utcnow()
             expiry_date = now + timedelta(days=7)
             
-            # 2. Update Supabase
-            # Using 'is_subscribed' as per user schema
+            # 2. Update Supabase via REST API
             update_data = {
                 'is_subscribed': True,
-                'subscription_expiry': expiry_date.isoformat(),
                 'updated_at': now.isoformat()
             }
             
-            response = supabase.table('users').update(update_data).eq('id', user_id).execute()
+            # Supabase REST API call
+            headers = {
+                'apikey': SUPABASE_KEY,
+                'Authorization': f'Bearer {SUPABASE_KEY}',
+                'Content-Type': 'application/json',
+                'Prefer': 'return=minimal'
+            }
             
-            return jsonify({'status': 'success', 'message': 'Payment verified and Subscription Activated'})
+            response = requests.patch(
+                f'{SUPABASE_URL}/rest/v1/users?id=eq.{user_id}',
+                json=update_data,
+                headers=headers
+            )
+            
+            if response.status_code in [200, 204]:
+                return jsonify({'status': 'success', 'message': 'Payment verified and Subscription Activated'})
+            else:
+                return jsonify({'status': 'error', 'message': f'Database update failed: {response.text}'}), 500
         else:
             return jsonify({'status': 'failure', 'message': 'Signature mismatch'}), 400
             
