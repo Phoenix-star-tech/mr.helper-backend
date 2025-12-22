@@ -87,9 +87,12 @@ def verify_payment():
             expiry_date = now + timedelta(days=7)
             
             # 2. Update Supabase via REST API
+            # CRITICAL: Set both old and new subscription fields
             update_data = {
                 'is_subscribed': True,
-                'subscription_expiry': expiry_date.isoformat()
+                'subscription_expiry': expiry_date.isoformat(),
+                'subscription_status': 'active',  # NEW: Strict status field
+                'subscription_end_date': expiry_date.isoformat()  # NEW: Strict end date
             }
             
             # Supabase REST API call
@@ -107,6 +110,7 @@ def verify_payment():
             )
             
             if response.status_code in [200, 204]:
+                print(f'✅ Subscription activated for user {user_id} until {expiry_date.isoformat()}')
                 return jsonify({'status': 'success', 'message': 'Payment verified and Subscription Activated'})
             else:
                 return jsonify({'status': 'error', 'message': f'Database update failed: {response.text}'}), 500
