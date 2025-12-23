@@ -92,6 +92,7 @@ def verify_payment():
                 'is_subscribed': True,
                 'subscription_expiry': expiry_date.isoformat(),
                 'subscription_status': 'active',  # NEW: Strict status field
+                'subscription_start_date': now.isoformat(),  # NEW: Track when subscription started
                 'subscription_end_date': expiry_date.isoformat()  # NEW: Strict end date
             }
             
