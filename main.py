@@ -25,22 +25,24 @@ def create_subscription():
     try:
         data = request.json
         user_id = data.get('userId')
+        fine_amount = data.get('fineAmount', 0)  # Get fine amount if exists
         
-        # Create a weekly plan if you haven't (or use existing ID)
-        # For simplicity, we create a subscription directly. 
-        # Note: In real Razorpay flow, you need a Plan ID. 
-        # Using a dummy or pre-existing plan ID is best.
-        # Here we attempt to create one on the fly for the valid logic.
+        # Base subscription amount (₹250 = 25000 paise)
+        base_amount = 25000
+        total_amount = base_amount + (fine_amount * 100)  # Convert fine to paise and add
         
-        # Hardcoding a plan creation for demo (check if similar plan exists in production logic)
+        print(f'Creating subscription for user {user_id}')
+        print(f'Base amount: ₹{base_amount/100}, Fine: ₹{fine_amount}, Total: ₹{total_amount/100}')
+        
+        # Create a weekly plan with the total amount
         plan = client.plan.create({
             "period": "weekly",
             "interval": 1,
             "item": {
-                "name": "Weekly Pro Plan",
-                "amount": 25000,
+                "name": "Weekly Pro Plan" + (f" + Fines" if fine_amount > 0 else ""),
+                "amount": int(total_amount),
                 "currency": "INR",
-                "description": "Weekly subscription for pro features"
+                "description": f"Weekly subscription (₹{base_amount/100})" + (f" + outstanding fines (₹{fine_amount})" if fine_amount > 0 else "")
             }
         })
         plan_id = plan['id']
@@ -51,17 +53,20 @@ def create_subscription():
             "quantity": 1,
             "total_count": 52,
             "notes": {
-                "user_id": user_id
+                "user_id": user_id,
+                "fine_amount": str(fine_amount) if fine_amount > 0 else "0"
             }
         })
 
         return jsonify({
             'id': subscription['id'],
             'plan_id': plan_id,
-            'status': subscription['status']
+            'status': subscription['status'],
+            'fine_amount': fine_amount
         })
 
     except Exception as e:
+        print(f'Error creating subscription: {e}')
         return jsonify({'error': str(e)}), 500
 
 @app.route('/verify-payment', methods=['POST'])
@@ -82,11 +87,44 @@ def verify_payment():
         ).hexdigest()
         
         if generated_signature == razorpay_signature:
-            # 1. Calculate Expiry (7 Days from now)
+            # Fetch subscription details to get fine amount
+            subscription = client.subscription.fetch(razorpay_subscription_id)
+            fine_amount = float(subscription.get('notes', {}).get('fine_amount', 0))
+            
+            print(f'Subscription verified for user {user_id}')
+            print(f'Fine amount in subscription: ₹{fine_amount}')
+            
+            # 1. If fine amount exists, mark fines as paid
+            if fine_amount > 0:
+                print(f'Paying fines for provider {user_id}, amount: ₹{fine_amount}')
+                
+                # Call Supabase RPC to pay fines
+                headers = {
+                    'apikey': SUPABASE_KEY,
+                    'Authorization': f'Bearer {SUPABASE_KEY}',
+                    'Content-Type': 'application/json'
+                }
+                
+                fine_response = requests.post(
+                    f'{SUPABASE_URL}/rest/v1/rpc/pay_provider_fines',
+                    json={
+                        'p_provider_id': user_id,
+                        'p_payment_amount': fine_amount,
+                        'p_payment_method': 'razorpay_subscription'
+                    },
+                    headers=headers
+                )
+                
+                if fine_response.status_code in [200, 204]:
+                    print(f'✅ Fines paid successfully for user {user_id}')
+                else:
+                    print(f'⚠️ Warning: Fine payment failed: {fine_response.text}')
+            
+            # 2. Calculate Expiry (7 Days from now)
             now = datetime.utcnow()
             expiry_date = now + timedelta(days=7)
             
-            # 2. Update Supabase via REST API
+            # 3. Update Supabase via REST API
             # CRITICAL: Set both old and new subscription fields
             update_data = {
                 'is_subscribed': True,
@@ -112,7 +150,11 @@ def verify_payment():
             
             if response.status_code in [200, 204]:
                 print(f'✅ Subscription activated for user {user_id} until {expiry_date.isoformat()}')
-                return jsonify({'status': 'success', 'message': 'Payment verified and Subscription Activated'})
+                return jsonify({
+                    'status': 'success', 
+                    'message': 'Payment verified and Subscription Activated',
+                    'fines_paid': fine_amount > 0
+                })
             else:
                 return jsonify({'status': 'error', 'message': f'Database update failed: {response.text}'}), 500
         else:
@@ -120,6 +162,92 @@ def verify_payment():
             
     except Exception as e:
         print(f"Error in verify: {e}")
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+@app.route('/create-fine-payment', methods=['POST'])
+def create_fine_payment():
+    try:
+        data = request.json
+        user_id = data.get('userId')
+        amount = data.get('amount')  # Amount in rupees
+        
+        print(f'Creating fine payment for user {user_id}, amount: ₹{amount}')
+        
+        # Create Razorpay order for fine payment
+        order = client.order.create({
+            'amount': int(amount * 100),  # Convert to paise
+            'currency': 'INR',
+            'payment_capture': 1,
+            'notes': {
+                'user_id': user_id,
+                'payment_type': 'fine_payment'
+            }
+        })
+        
+        return jsonify({
+            'orderId': order['id'],
+            'amount': amount
+        })
+    
+    except Exception as e:
+        print(f'Error creating fine payment: {e}')
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/verify-fine-payment', methods=['POST'])
+def verify_fine_payment():
+    try:
+        data = request.json
+        razorpay_payment_id = data.get('razorpay_payment_id')
+        razorpay_order_id = data.get('razorpay_order_id')
+        razorpay_signature = data.get('razorpay_signature')
+        user_id = data.get('user_id')
+        fine_amount = data.get('fine_amount', 0)
+        
+        # Verify signature
+        msg = f"{razorpay_order_id}|{razorpay_payment_id}"
+        
+        generated_signature = hmac.new(
+            bytes(RAZORPAY_KEY_SECRET, 'utf-8'),
+            bytes(msg, 'utf-8'),
+            hashlib.sha256
+        ).hexdigest()
+        
+        if generated_signature == razorpay_signature:
+            print(f'Fine payment verified for user {user_id}, amount: ₹{fine_amount}')
+            
+            # Call Supabase RPC to pay fines
+            headers = {
+                'apikey': SUPABASE_KEY,
+                'Authorization': f'Bearer {SUPABASE_KEY}',
+                'Content-Type': 'application/json'
+            }
+            
+            fine_response = requests.post(
+                f'{SUPABASE_URL}/rest/v1/rpc/pay_provider_fines',
+                json={
+                    'p_provider_id': user_id,
+                    'p_payment_amount': fine_amount,
+                    'p_payment_method': 'razorpay'
+                },
+                headers=headers
+            )
+            
+            if fine_response.status_code in [200, 204]:
+                print(f'✅ Fines paid successfully for user {user_id}')
+                return jsonify({
+                    'status': 'success',
+                    'message': 'Fine payment verified and fines marked as paid'
+                })
+            else:
+                return jsonify({
+                    'status': 'error',
+                    'message': f'Fine payment failed: {fine_response.text}'
+                }), 500
+        else:
+            return jsonify({'status': 'failure', 'message': 'Signature mismatch'}), 400
+    
+    except Exception as e:
+        print(f'Error verifying fine payment: {e}')
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
 if __name__ == '__main__':
