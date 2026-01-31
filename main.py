@@ -62,7 +62,9 @@ def create_subscription():
             'id': subscription['id'],
             'plan_id': plan_id,
             'status': subscription['status'],
-            'fine_amount': fine_amount
+            'fine_amount': fine_amount,
+            'amount': total_amount,
+            'currency': 'INR'
         })
 
     except Exception as e:
