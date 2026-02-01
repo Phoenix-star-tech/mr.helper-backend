@@ -26,13 +26,14 @@ def create_subscription():
         data = request.json
         user_id = data.get('userId')
         fine_amount = data.get('fineAmount', 0)  # Get fine amount if exists
+        subscription_amount = data.get('subscriptionAmount', 250)  # Dynamic subscription amount (default 250)
         
-        # Base subscription amount (₹250 = 25000 paise)
-        base_amount = 25000
-        total_amount = base_amount + (fine_amount * 100)  # Convert fine to paise and add
+        # Base subscription amount (convert to paise)
+        base_amount = int(subscription_amount * 100)
+        total_amount = base_amount + int(fine_amount * 100)  # Convert fine to paise and add
         
         print(f'Creating subscription for user {user_id}')
-        print(f'Base amount: ₹{base_amount/100}, Fine: ₹{fine_amount}, Total: ₹{total_amount/100}')
+        print(f'Base amount: ₹{subscription_amount}, Fine: ₹{fine_amount}, Total: ₹{total_amount/100}')
         
         # Create a weekly plan with the total amount
         plan = client.plan.create({
@@ -42,7 +43,7 @@ def create_subscription():
                 "name": "Weekly Pro Plan" + (f" + Fines" if fine_amount > 0 else ""),
                 "amount": int(total_amount),
                 "currency": "INR",
-                "description": f"Weekly subscription (₹{base_amount/100})" + (f" + outstanding fines (₹{fine_amount})" if fine_amount > 0 else "")
+                "description": f"Weekly subscription (₹{subscription_amount})" + (f" + outstanding fines (₹{fine_amount})" if fine_amount > 0 else "")
             }
         })
         plan_id = plan['id']
